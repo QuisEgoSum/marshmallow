@@ -13,11 +13,11 @@ import json
 import typing
 import warnings
 
-from marshmallow import base, fields as ma_fields, class_registry, types
-from marshmallow.error_store import ErrorStore
-from marshmallow.exceptions import ValidationError, StringNotCollectionError
-from marshmallow.orderedset import OrderedSet
-from marshmallow.decorators import (
+from . import base, fields as ma_fields, class_registry, types
+from .error_store import ErrorStore
+from .exceptions import ValidationError, StringNotCollectionError
+from .orderedset import OrderedSet
+from .decorators import (
     POST_DUMP,
     POST_LOAD,
     PRE_DUMP,
@@ -25,7 +25,7 @@ from marshmallow.decorators import (
     VALIDATES,
     VALIDATES_SCHEMA,
 )
-from marshmallow.utils import (
+from .utils import (
     RAISE,
     EXCLUDE,
     INCLUDE,
@@ -36,7 +36,7 @@ from marshmallow.utils import (
     is_instance_or_subclass,
     validate_unknown_parameter_value,
 )
-from marshmallow.warnings import RemovedInMarshmallow4Warning
+from .warnings import RemovedInMarshmallow4Warning
 
 _T = typing.TypeVar("_T")
 
@@ -375,6 +375,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         dump_only: types.StrSequenceOrSet = (),
         partial: bool | types.StrSequenceOrSet = False,
         unknown: str | None = None,
+        fields: dict | None = None
     ):
         # Raise error if only or exclude is passed as string, not list of strings
         if only is not None and not is_collection(only):
@@ -383,6 +384,9 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
             raise StringNotCollectionError('"exclude" should be a list of strings')
         # copy declared fields from metaclass
         self.declared_fields = copy.deepcopy(self._declared_fields)
+        if fields is not None:
+            for name, value in fields.items():
+                self.declared_fields[name] = value
         self.many = many
         self.only = only
         self.exclude = set(self.opts.exclude) | set(exclude)

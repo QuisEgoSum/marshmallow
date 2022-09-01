@@ -6,7 +6,7 @@
     Users should not need to use this module directly.
 """
 
-from marshmallow.exceptions import SCHEMA
+from .exceptions import SCHEMA
 
 
 class ErrorStore:

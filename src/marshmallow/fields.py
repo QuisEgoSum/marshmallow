@@ -1,33 +1,34 @@
-"""Field classes for various types of data."""
 from __future__ import annotations
 
 import collections
 import copy
 import datetime as dt
-import numbers
-import uuid
-import ipaddress
 import decimal
+import enum
+import ipaddress
 import math
+import numbers
+import sys
 import typing
+import uuid
 import warnings
 from collections.abc import Mapping as _Mapping
 
-from marshmallow import validate, utils, class_registry, types
-from marshmallow.base import FieldABC, SchemaABC
-from marshmallow.utils import (
+from . import validate, utils, class_registry, types
+from .base import SchemaABC, FieldABC
+from .exceptions import (
+    ValidationError,
+    StringNotCollectionError,
+    FieldInstanceResolutionError,
+)
+from .utils import (
     is_collection,
     missing as missing_,
     resolve_field_instance,
     is_aware,
 )
-from marshmallow.exceptions import (
-    ValidationError,
-    StringNotCollectionError,
-    FieldInstanceResolutionError,
-)
-from marshmallow.validate import And, Length
-from marshmallow.warnings import RemovedInMarshmallow4Warning
+from .validate import Length, And
+from .warnings import RemovedInMarshmallow4Warning
 
 __all__ = [
     "Field",
@@ -66,12 +67,23 @@ __all__ = [
     "Int",
     "Constant",
     "Pluck",
+    'Enum'
 ]
+
+PY2 = sys.version_info.major == 2
+# ugh Python 2
+if PY2:
+    string_types = (str, unicode)  # noqa: F821
+    text_type = unicode  # noqa: F821
+else:
+    string_types = (str, )
+    text_type = str
+
 
 _T = typing.TypeVar("_T")
 
 
-class Field(FieldABC):
+class BaseField(FieldABC):
     """Basic field from which other fields should extend. It applies no
     formatting by default, and should only be used in cases where
     data does not need to be formatted before being serialized or deserialized.
@@ -478,6 +490,59 @@ class Field(FieldABC):
         self.load_default = value
 
 
+class Field(BaseField):
+    field_name = None
+    deprecated = None
+
+    default_error_messages = {
+        "required": "{field_name} is required field.",
+        "null": "{field_name} can not be empty.",
+        "validator_failed": "Invalid value.",
+    }
+
+    @property
+    def name(self):
+        return self.field_name
+
+    @name.setter
+    def name(self, value):
+        self.field_name = self.data_key or value
+        for validation in self.validators:
+            validation.field_name = self.field_name
+
+    def __init__(
+            self,
+            transform=None,
+            description: str = None,
+            meta_one_of=None,
+            deprecated=None,
+            **kwargs
+    ):
+        super().__init__(**kwargs)
+        self._transform = transform
+        self.description = description
+        self.meta_one_of = meta_one_of
+        self.deprecated = deprecated
+
+    def transform(self, value):
+        if self._transform is not None:
+            if isinstance(self._transform, list):
+                for f in self._transform:
+                    value = f(value)
+            else:
+                value = self._transform(value)
+        return value
+
+    def make_error(self, key: str, **kwargs) -> ValidationError:
+        return super().make_error(key, field_name=self.field_name, **kwargs)
+
+    def _deserialize(self, value, attr, data, **kwargs) -> typing.AnyStr:
+        return self.transform(super()._deserialize(value, attr, data, **kwargs))
+
+    def _serialize(self, value, attr, obj, **kwargs) -> typing.AnyStr:
+        return self.transform(super().serialize(value, attr, obj, **kwargs))
+
+
 class Raw(Field):
     """Field that applies no formatting."""
 
@@ -528,23 +593,23 @@ class Nested(Field):
     """
 
     #: Default error messages.
-    default_error_messages = {"type": "Invalid type."}
+    default_error_messages = {"type": "{filed_name} contain invalid data type"}
 
     def __init__(
-        self,
-        nested: SchemaABC
-        | type
-        | str
-        | dict[str, Field | type]
-        | typing.Callable[[], SchemaABC | dict[str, Field | type]],
-        *,
-        dump_default: typing.Any = missing_,
-        default: typing.Any = missing_,
-        only: types.StrSequenceOrSet | None = None,
-        exclude: types.StrSequenceOrSet = (),
-        many: bool = False,
-        unknown: str | None = None,
-        **kwargs,
+            self,
+            nested: SchemaABC
+                    | type
+                    | str
+                    | dict[str, Field | type]
+                    | typing.Callable[[], SchemaABC | dict[str, Field | type]],
+            *,
+            dump_default: typing.Any = missing_,
+            default: typing.Any = missing_,
+            only: types.StrSequenceOrSet | None = None,
+            exclude: types.StrSequenceOrSet = (),
+            many: bool = False,
+            unknown: str | None = None,
+            **kwargs,
     ):
         # Raise error if only or exclude is passed as string, not list of strings
         if only is not None and not is_collection(only):
@@ -695,10 +760,10 @@ class Pluck(Nested):
     """
 
     def __init__(
-        self,
-        nested: SchemaABC | type | str | typing.Callable[[], SchemaABC],
-        field_name: str,
-        **kwargs,
+            self,
+            nested: SchemaABC | type | str | typing.Callable[[], SchemaABC],
+            field_name: str,
+            **kwargs,
     ):
         super().__init__(nested, only=(field_name,), **kwargs)
         self.field_name = field_name
@@ -745,7 +810,7 @@ class List(Field):
     """
 
     #: Default error messages.
-    default_error_messages = {"invalid": "Not a valid list."}
+    default_error_messages = {"invalid": "{field_name} are not a valid list."}
 
     def __init__(self, cls_or_instance: Field | type, **kwargs):
         super().__init__(**kwargs)
@@ -883,7 +948,7 @@ class String(Field):
 
     #: Default error messages.
     default_error_messages = {
-        "invalid": "Not a valid string.",
+        "invalid": "{field_name} must be string",
         "invalid_utf8": "Not a valid utf-8 string.",
     }
 
@@ -936,8 +1001,8 @@ class Number(Field):
 
     #: Default error messages.
     default_error_messages = {
-        "invalid": "Not a valid number.",
-        "too_large": "Number too large.",
+        "invalid": "{field_name} must be number.",
+        "too_large": "Number too large."
     }
 
     def __init__(self, *, as_string: bool = False, **kwargs):
@@ -997,7 +1062,7 @@ class Integer(Number):
     def _validated(self, value):
         if self.strict:
             if isinstance(value, numbers.Number) and isinstance(
-                value, numbers.Integral
+                    value, numbers.Integral
             ):
                 return super()._validated(value)
             raise self.make_error("invalid", input=value)
@@ -1077,13 +1142,13 @@ class Decimal(Number):
     }
 
     def __init__(
-        self,
-        places: int | None = None,
-        rounding: str | None = None,
-        *,
-        allow_nan: bool = False,
-        as_string: bool = False,
-        **kwargs,
+            self,
+            places: int | None = None,
+            rounding: str | None = None,
+            *,
+            allow_nan: bool = False,
+            as_string: bool = False,
+            **kwargs,
     ):
         self.places = (
             decimal.Decimal((0, (1,), -places)) if places is not None else None
@@ -1115,6 +1180,106 @@ class Decimal(Number):
     # override Number
     def _to_string(self, value):
         return format(value, "f")
+
+
+class LoadDumpOptions(enum.Enum):
+    value = 1
+    name = 0
+
+
+class Enum(Field):
+    VALUE = LoadDumpOptions.value
+    NAME = LoadDumpOptions.name
+
+    default_error_messages = {
+        'by_name': 'Invalid enum member {input}. Allowed values: {values}.',
+        'by_value': 'Invalid enum value {input}. Allowed values: {values}.',
+        'must_be_string': 'Enum name must be string. Allowed values: {values}.'
+    }
+
+    def __init__(
+            self, target_enum, by_value=False, load_by=None, dump_by=None, error='', *args, **kwargs
+    ):
+        self.enum = target_enum
+        self.by_value = by_value
+
+        if error and any(old in error for old in ('name}', 'value}', 'choices}')):
+            warnings.warn(
+                "'name', 'value', and 'choices' fail inputs are deprecated,"
+                "use input, names and values instead",
+                DeprecationWarning,
+                stacklevel=2
+            )
+
+        self.error = error
+
+        if load_by is None:
+            load_by = LoadDumpOptions.value if by_value else LoadDumpOptions.name
+
+        if not isinstance(load_by, enum.Enum) or load_by not in LoadDumpOptions:
+            raise ValueError(
+                'Invalid selection for load_by must be Enum.VALUE or Enum.NAME, got {}'.
+                format(load_by)
+            )
+
+        if dump_by is None:
+            dump_by = LoadDumpOptions.value if by_value else LoadDumpOptions.name
+
+        if not isinstance(dump_by, enum.Enum) or dump_by not in LoadDumpOptions:
+            raise ValueError(
+                'Invalid selection for load_by must be Enum.VALUE or Enum.NAME, got {}'.
+                format(dump_by)
+            )
+
+        self.load_by = load_by
+        self.dump_by = dump_by
+
+        super(Enum, self).__init__(*args, **kwargs)
+
+    def _serialize(self, value, attr, obj):
+        if value is None:
+            return None
+        elif self.dump_by == LoadDumpOptions.value:
+            return value.value
+        else:
+            return value.name
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        if value is None:
+            return None
+        elif self.load_by == LoadDumpOptions.value:
+            return self._deserialize_by_value(value, attr, data)
+        else:
+            return self._deserialize_by_name(value, attr, data)
+
+    def _deserialize_by_value(self, value, attr, data):
+        try:
+            return self.enum(value)
+        except ValueError:
+            self.fail('by_value', input=value, value=value)
+
+    def _deserialize_by_name(self, value, attr, data):
+        if not isinstance(value, string_types):
+            self.fail('must_be_string', input=value, name=value)
+
+        try:
+            return getattr(self.enum, value)
+        except AttributeError:
+            self.fail('by_name', input=value, name=value)
+
+    def fail(self, key, **kwargs):
+        kwargs['values'] = ', '.join([text_type(mem.value) for mem in self.enum])
+        kwargs['names'] = ', '.join([mem.name for mem in self.enum])
+
+        if self.error:
+            if self.by_value:
+                kwargs['choices'] = kwargs['values']
+            else:
+                kwargs['choices'] = kwargs['names']
+            msg = self.error.format(**kwargs)
+            raise ValidationError(msg)
+        else:
+            super().fail(key, **kwargs)
 
 
 class Boolean(Field):
@@ -1169,14 +1334,14 @@ class Boolean(Field):
     }
 
     #: Default error messages.
-    default_error_messages = {"invalid": "Not a valid boolean."}
+    default_error_messages = {"invalid": "{field_name} must be boolean."}
 
     def __init__(
-        self,
-        *,
-        truthy: set | None = None,
-        falsy: set | None = None,
-        **kwargs,
+            self,
+            *,
+            truthy: set | None = None,
+            falsy: set | None = None,
+            **kwargs,
     ):
         super().__init__(**kwargs)
 
@@ -1192,7 +1357,7 @@ class Boolean(Field):
         try:
             if value in self.truthy:
                 return True
-            if value in self.falsy:
+            elif value in self.falsy:
                 return False
         except TypeError:
             pass
@@ -1202,13 +1367,14 @@ class Boolean(Field):
     def _deserialize(self, value, attr, data, **kwargs):
         if not self.truthy:
             return bool(value)
-        try:
-            if value in self.truthy:
-                return True
-            if value in self.falsy:
-                return False
-        except TypeError as error:
-            raise self.make_error("invalid", input=value) from error
+        else:
+            try:
+                if value in self.truthy:
+                    return True
+                elif value in self.falsy:
+                    return False
+            except TypeError as error:
+                raise self.make_error("invalid", input=value) from error
         raise self.make_error("invalid", input=value)
 
 
@@ -1262,9 +1428,9 @@ class DateTime(Field):
     def _bind_to_schema(self, field_name, schema):
         super()._bind_to_schema(field_name, schema)
         self.format = (
-            self.format
-            or getattr(self.root.opts, self.SCHEMA_OPTS_VAR_NAME)
-            or self.DEFAULT_FORMAT
+                self.format
+                or getattr(self.root.opts, self.SCHEMA_OPTS_VAR_NAME)
+                or self.DEFAULT_FORMAT
         )
 
     def _serialize(self, value, attr, obj, **kwargs):
@@ -1318,11 +1484,11 @@ class NaiveDateTime(DateTime):
     AWARENESS = "naive"
 
     def __init__(
-        self,
-        format: str | None = None,
-        *,
-        timezone: dt.timezone | None = None,
-        **kwargs,
+            self,
+            format: str | None = None,
+            *,
+            timezone: dt.timezone | None = None,
+            **kwargs,
     ):
         super().__init__(format=format, **kwargs)
         self.timezone = timezone
@@ -1355,11 +1521,11 @@ class AwareDateTime(DateTime):
     AWARENESS = "aware"
 
     def __init__(
-        self,
-        format: str | None = None,
-        *,
-        default_timezone: dt.tzinfo | None = None,
-        **kwargs,
+            self,
+            format: str | None = None,
+            *,
+            default_timezone: dt.tzinfo | None = None,
+            **kwargs,
     ):
         super().__init__(format=format, **kwargs)
         self.default_timezone = default_timezone
@@ -1479,10 +1645,10 @@ class TimeDelta(Field):
     }
 
     def __init__(
-        self,
-        precision: str = SECONDS,
-        serialization_type: type[int | float] = int,
-        **kwargs,
+            self,
+            precision: str = SECONDS,
+            serialization_type: type[int | float] = int,
+            **kwargs,
     ):
         precision = precision.lower()
         units = (
@@ -1556,10 +1722,10 @@ class Mapping(Field):
     default_error_messages = {"invalid": "Not a valid mapping type."}
 
     def __init__(
-        self,
-        keys: Field | type | None = None,
-        values: Field | type | None = None,
-        **kwargs,
+            self,
+            keys: Field | type | None = None,
+            values: Field | type | None = None,
+            **kwargs,
     ):
         super().__init__(**kwargs)
         if keys is None:
@@ -1700,12 +1866,12 @@ class Url(String):
     default_error_messages = {"invalid": "Not a valid URL."}
 
     def __init__(
-        self,
-        *,
-        relative: bool = False,
-        schemes: types.StrSequenceOrSet | None = None,
-        require_tld: bool = True,
-        **kwargs,
+            self,
+            *,
+            relative: bool = False,
+            schemes: types.StrSequenceOrSet | None = None,
+            require_tld: bool = True,
+            **kwargs,
     ):
         super().__init__(**kwargs)
 
@@ -1731,7 +1897,7 @@ class Email(String):
     #: Default error messages.
     default_error_messages = {"invalid": "Not a valid email address."}
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Insert validation into self.validators so that multiple errors can be stored.
         validator = validate.Email(error=self.error_messages["invalid"])
@@ -1763,7 +1929,7 @@ class IP(Field):
         return value.compressed
 
     def _deserialize(
-        self, value, attr, data, **kwargs
+            self, value, attr, data, **kwargs
     ) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         if value is None:
             return None
@@ -1800,7 +1966,7 @@ class IPv6(IP):
 class IPInterface(Field):
     """A IPInterface field.
 
-    IP interface is the non-strict form of the IPNetwork type where arbitrary host
+    IP interface is the non-stict form of the IPNetwork type where arbitrary host
     addresses are always accepted.
 
     IPAddress and mask e.g. '192.168.0.2/24' or '192.168.0.2/255.255.255.0'
@@ -1815,7 +1981,7 @@ class IPInterface(Field):
 
     DESERIALIZATION_CLASS = None  # type: typing.Optional[typing.Type]
 
-    def __init__(self, *args, exploded: bool = False, **kwargs):
+    def __init__(self, *args, exploded=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.exploded = exploded
 
@@ -1827,7 +1993,7 @@ class IPInterface(Field):
         return value.compressed
 
     def _deserialize(
-        self, value, attr, data, **kwargs
+            self, value, attr, data, **kwargs
     ) -> None | (ipaddress.IPv4Interface | ipaddress.IPv6Interface):
         if value is None:
             return None
@@ -1879,10 +2045,10 @@ class Method(Field):
     _CHECK_ATTRIBUTE = False
 
     def __init__(
-        self,
-        serialize: str | None = None,
-        deserialize: str | None = None,
-        **kwargs,
+            self,
+            serialize: str | None = None,
+            deserialize: str | None = None,
+            **kwargs,
     ):
         # Set dump_only and load_only based on arguments
         kwargs["dump_only"] = bool(serialize) and not bool(deserialize)
@@ -1943,18 +2109,18 @@ class Function(Field):
     _CHECK_ATTRIBUTE = False
 
     def __init__(
-        self,
-        serialize: None
-        | (
-            typing.Callable[[typing.Any], typing.Any]
-            | typing.Callable[[typing.Any, dict], typing.Any]
-        ) = None,
-        deserialize: None
-        | (
-            typing.Callable[[typing.Any], typing.Any]
-            | typing.Callable[[typing.Any, dict], typing.Any]
-        ) = None,
-        **kwargs,
+            self,
+            serialize: None
+                       | (
+                               typing.Callable[[typing.Any], typing.Any]
+                               | typing.Callable[[typing.Any, dict], typing.Any]
+                       ) = None,
+            deserialize: None
+                         | (
+                                 typing.Callable[[typing.Any], typing.Any]
+                                 | typing.Callable[[typing.Any, dict], typing.Any]
+                         ) = None,
+            **kwargs,
     ):
         # Set dump_only and load_only based on arguments
         kwargs["dump_only"] = bool(serialize) and not bool(deserialize)

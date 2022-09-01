@@ -13,9 +13,9 @@ from collections.abc import Mapping
 from email.utils import format_datetime, parsedate_to_datetime
 from pprint import pprint as py_pprint
 
-from marshmallow.base import FieldABC
-from marshmallow.exceptions import FieldInstanceResolutionError
-from marshmallow.warnings import RemovedInMarshmallow4Warning
+from .base import FieldABC
+from .exceptions import FieldInstanceResolutionError
+from .warnings import RemovedInMarshmallow4Warning
 
 EXCLUDE = "exclude"
 INCLUDE = "include"

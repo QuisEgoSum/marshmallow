@@ -7,8 +7,8 @@ from abc import ABC, abstractmethod
 from itertools import zip_longest
 from operator import attrgetter
 
-from marshmallow import types
-from marshmallow.exceptions import ValidationError
+from . import types
+from .exceptions import ValidationError
 
 _T = typing.TypeVar("_T")
 
@@ -21,6 +21,7 @@ class Validator(ABC):
         add a useful `__repr__` implementation for validators.
     """
 
+    field_name = None
     error = None  # type: str | None
 
     def __repr__(self) -> str:
@@ -261,10 +262,9 @@ class Range(Validator):
         Can be interpolated with `{input}`, `{min}` and `{max}`.
     """
 
-    message_min = "Must be {min_op} {{min}}."
-    message_max = "Must be {max_op} {{max}}."
-    message_all = "Must be {min_op} {{min}} and {max_op} {{max}}."
-
+    message_min = "{{field_name}} must be {min_op} {{min}}."
+    message_max = "{{field_name}} must be {max_op} {{max}}."
+    message_all = "{{field_name}} must be {min_op} {{min}} and {max_op} {{max}}."
     message_gte = "greater than or equal to"
     message_gt = "greater than"
     message_lte = "less than or equal to"
@@ -303,7 +303,7 @@ class Range(Validator):
         )
 
     def _format_error(self, value: _T, message: str) -> str:
-        return (self.error or message).format(input=value, min=self.min, max=self.max)
+        return (self.error or message).format(input=value, min=self.min, max=self.max, field_name=self.field_name)
 
     def __call__(self, value: _T) -> _T:
         if self.min is not None and (
@@ -336,10 +336,10 @@ class Length(Validator):
         Can be interpolated with `{input}`, `{min}` and `{max}`.
     """
 
-    message_min = "Shorter than minimum length {min}."
-    message_max = "Longer than maximum length {max}."
-    message_all = "Length must be between {min} and {max}."
-    message_equal = "Length must be {equal}."
+    message_min = "{field_name} must be at least {min} character long."
+    message_max = "{field_name} exceeds {max} characters limit."
+    message_all = "{field_name} length must be between {min} and {max}."
+    message_equal = "{field_name} length must be {equal} characters long."
 
     def __init__(
         self,
@@ -365,7 +365,7 @@ class Length(Validator):
 
     def _format_error(self, value: typing.Sized, message: str) -> str:
         return (self.error or message).format(
-            input=value, min=self.min, max=self.max, equal=self.equal
+            input=value, min=self.min, max=self.max, equal=self.equal, field_name=self.field_name
         )
 
     def __call__(self, value: typing.Sized) -> typing.Sized:
@@ -385,6 +385,13 @@ class Length(Validator):
             raise ValidationError(self._format_error(value, message))
 
         return value
+
+
+class Items(Length):
+    message_min = "Shorter than minimum length {min}."
+    message_max = "Longer than maximum length {max}."
+    message_all = "Length must be between {min} and {max}."
+    message_equal = "Length must be {equal}."
 
 
 class Equal(Validator):
@@ -429,7 +436,7 @@ class Regexp(Validator):
         Can be interpolated with `{input}` and `{regex}`.
     """
 
-    default_message = "String does not match expected pattern."
+    default_message = "{field_name} must match the regular expression {regex}."
 
     def __init__(
         self,
@@ -447,7 +454,7 @@ class Regexp(Validator):
         return f"regex={self.regex!r}"
 
     def _format_error(self, value: str | bytes) -> str:
-        return self.error.format(input=value, regex=self.regex.pattern)
+        return self.error.format(input=value, regex=self.regex.pattern, field_name=self.field_name)
 
     @typing.overload
     def __call__(self, value: str) -> str:

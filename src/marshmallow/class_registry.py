@@ -10,10 +10,10 @@ class:`fields.Nested <marshmallow.fields.Nested>`.
 from __future__ import annotations
 
 import typing
-from marshmallow.exceptions import RegistryError
+from .exceptions import RegistryError
 
 if typing.TYPE_CHECKING:
-    from marshmallow import Schema
+    from . import Schema
 
     SchemaType = typing.Type[Schema]
 

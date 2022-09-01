@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from packaging.version import Version
 
-from marshmallow.decorators import (
+from .decorators import (
     post_dump,
     post_load,
     pre_dump,
@@ -10,13 +10,14 @@ from marshmallow.decorators import (
     validates,
     validates_schema,
 )
-from marshmallow.exceptions import ValidationError
-from marshmallow.schema import Schema, SchemaOpts
-from marshmallow.utils import EXCLUDE, INCLUDE, RAISE, missing, pprint
+from .exceptions import ValidationError
+from .schema import Schema, SchemaOpts
+from .utils import EXCLUDE, INCLUDE, RAISE, missing, pprint
 
+from . import dataclass_fields
 from . import fields
 
-__version__ = "3.17.1"
+__version__ = "3.17.0"
 __parsed_version__ = Version(__version__)
 __version_info__: tuple[int, int, int] | tuple[
     int, int, int, str, int
